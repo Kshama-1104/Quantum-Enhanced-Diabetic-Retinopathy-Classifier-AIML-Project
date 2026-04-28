@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+
 import gdown
 import numpy as np
 import streamlit as st
@@ -15,16 +16,30 @@ def setting(name, default=None):
 
 @st.cache_resource
 def load_model():
-    model_file = setting("MODEL_FILENAME", "best_quantum_inception_cpu.keras")
-    model_path = Path("models") / model_file
-    file_id = setting("MODEL_FILE_ID")
+    models_dir = Path("models")
+    models_dir.mkdir(exist_ok=True)
 
-    if not model_path.exists():
-        if not file_id:
-            raise RuntimeError("MODEL_FILE_ID is missing. Add it in Streamlit secrets.")
-        model_path.parent.mkdir(exist_ok=True)
+    model_filename = setting("MODEL_FILENAME", "")
+    folder_id = setting("MODEL_FOLDER_ID", "")
+    file_id = setting("MODEL_FILE_ID", "")
+
+    if model_filename:
+        model_path = models_dir / model_filename
+        if model_path.exists():
+            return tf.keras.models.load_model(model_path, compile=False)
+
+    if file_id and model_filename:
+        model_path = models_dir / model_filename
         gdown.download(id=file_id, output=str(model_path), quiet=False)
 
+    elif folder_id:
+        gdown.download_folder(id=folder_id, output=str(models_dir), quiet=False)
+
+    keras_files = list(models_dir.rglob("*.keras"))
+    if not keras_files:
+        raise RuntimeError("No .keras model file found in the Google Drive folder.")
+
+    model_path = keras_files[0]
     return tf.keras.models.load_model(model_path, compile=False)
 
 def prepare_image(uploaded_image, size):
