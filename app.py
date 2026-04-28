@@ -14,6 +14,9 @@ CLASS_NAMES = ["Abnormal", "Normal"]
 def setting(name, default=None):
     return os.environ.get(name) or st.secrets.get(name, default)
 
+def load_one_model(path):
+    return tf.keras.models.load_model(path, compile=False)
+
 @st.cache_resource
 def load_model():
     models_dir = Path("models")
@@ -23,24 +26,34 @@ def load_model():
     folder_id = setting("MODEL_FOLDER_ID", "")
     file_id = setting("MODEL_FILE_ID", "")
 
-    if model_filename:
-        model_path = models_dir / model_filename
-        if model_path.exists():
-            return tf.keras.models.load_model(model_path, compile=False)
-
     if file_id and model_filename:
         model_path = models_dir / model_filename
-        gdown.download(id=file_id, output=str(model_path), quiet=False)
+        if not model_path.exists():
+            gdown.download(id=file_id, output=str(model_path), quiet=False)
 
     elif folder_id:
-        gdown.download_folder(id=folder_id, output=str(models_dir), quiet=False)
+        if not list(models_dir.rglob("*.keras")):
+            gdown.download_folder(id=folder_id, output=str(models_dir), quiet=False)
 
-    keras_files = list(models_dir.rglob("*.keras"))
-    if not keras_files:
-        raise RuntimeError("No .keras model file found in the Google Drive folder.")
+    if model_filename:
+        candidates = list(models_dir.rglob(model_filename))
+    else:
+        candidates = list(models_dir.rglob("*.keras"))
 
-    model_path = keras_files[0]
-    return tf.keras.models.load_model(model_path, compile=False)
+    candidates = sorted(candidates, key=lambda p: p.stat().st_size, reverse=True)
+
+    if not candidates:
+        raise RuntimeError("No .keras model file found. Check your Google Drive folder.")
+
+    errors = []
+    for path in candidates:
+        try:
+            model = load_one_model(path)
+            return model, path.name
+        except Exception as e:
+            errors.append(f"{path.name}: {e}")
+
+    raise RuntimeError("No model file could be loaded.\n\n" + "\n\n".join(errors))
 
 def prepare_image(uploaded_image, size):
     image = Image.open(uploaded_image).convert("RGB").resize(size)
@@ -53,8 +66,8 @@ st.caption("AI screening support only. This is not a medical diagnosis.")
 uploaded = st.file_uploader("Upload retinal image", type=["jpg", "jpeg", "png", "bmp", "webp"])
 
 try:
-    model = load_model()
-    st.success("Model loaded successfully")
+    model, model_name = load_model()
+    st.success(f"Model loaded successfully: {model_name}")
 
     if uploaded:
         input_shape = model.input_shape
