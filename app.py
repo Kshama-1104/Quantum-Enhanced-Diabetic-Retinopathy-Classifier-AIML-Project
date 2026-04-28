@@ -10,53 +10,60 @@ import tensorflow as tf
 from PIL import Image
 
 st.set_page_config(
-    page_title="Diabetic Retinopathy Classifier",
+    page_title="Diabetic Retinopathy Screening",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 CLASS_NAMES = ["Abnormal", "Normal"]
 
 st.markdown("""
 <style>
-.stApp { background: #f6faf9; }
-.block-container { padding-top: 2rem; max-width: 1180px; }
+#MainMenu, footer, header {visibility: hidden;}
+.stApp { background: #f5faf8; color: #172522; }
+.block-container { padding-top: 2rem; max-width: 1120px; }
 .hero {
-  padding: 32px 36px;
-  background: linear-gradient(135deg, #12312d, #218a77);
-  border-radius: 16px;
+  padding: 34px 38px;
+  background: linear-gradient(135deg, #10342e, #1f8a76);
+  border-radius: 14px;
   color: white;
   margin-bottom: 24px;
 }
-.hero h1 { margin: 0; font-size: 46px; line-height: 1.08; }
-.hero p { color: #d9f5ee; font-size: 18px; margin-top: 14px; }
-.panel {
-  padding: 20px;
-  border-radius: 12px;
+.hero h1 { margin: 0; font-size: 44px; line-height: 1.1; }
+.hero p { margin-top: 14px; color: #daf7f0; font-size: 18px; max-width: 760px; }
+.card {
+  padding: 22px;
+  border-radius: 10px;
   background: white;
-  border: 1px solid #e2ebe8;
+  border: 1px solid #dfe9e6;
+}
+.step {
+  padding: 16px;
+  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid #dfe9e6;
+  min-height: 92px;
 }
 .result-normal {
-  padding: 18px;
-  border-radius: 12px;
+  padding: 22px;
+  border-radius: 10px;
   background: #e7f7ef;
   color: #075c3c;
   border: 1px solid #bde8d1;
 }
 .result-abnormal {
-  padding: 18px;
-  border-radius: 12px;
+  padding: 22px;
+  border-radius: 10px;
   background: #fdecec;
   color: #9f1d1d;
-  border: 1px solid #f6c7c7;
+  border: 1px solid #f3c5c5;
 }
-.small-note { color: #61736f; font-size: 14px; }
-.footer {
-  color:#667;
-  font-size:14px;
+.footer-note {
+  color: #66736f;
+  font-size: 14px;
   border-top: 1px solid #d9e5e1;
-  padding-top: 22px;
-  margin-top: 48px;
+  padding-top: 20px;
+  margin-top: 42px;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -89,20 +96,19 @@ def load_model():
     candidates = sorted(candidates, key=lambda p: p.stat().st_size, reverse=True)
 
     if not candidates:
-        raise RuntimeError("No .keras model file found. Check your Google Drive folder.")
+        raise RuntimeError("No .keras model file found. Check MODEL_FOLDER_ID or MODEL_FILE_ID.")
 
     errors = []
     for path in candidates:
         try:
-            model = load_one_model(path)
-            return model, path.name
+            return load_one_model(path), path.name
         except Exception as e:
             errors.append(f"{path.name}: {e}")
 
     raise RuntimeError("No model file could be loaded.\n\n" + "\n\n".join(errors))
 
-def prepare_image(uploaded_image, size):
-    image = Image.open(uploaded_image).convert("RGB").resize(size)
+def prepare_image(uploaded_file, size):
+    image = Image.open(uploaded_file).convert("RGB").resize(size)
     array = np.asarray(image).astype("float32") / 255.0
     return np.expand_dims(array, axis=0), image
 
@@ -110,14 +116,14 @@ def predict(model, batch):
     raw = model.predict(batch, verbose=0)[0]
 
     if len(raw.shape) == 0 or raw.shape[-1] == 1:
-        normal_prob = float(np.ravel(raw)[0])
-        probs = np.array([1 - normal_prob, normal_prob], dtype="float32")
+        normal_probability = float(np.ravel(raw)[0])
+        probs = np.array([1 - normal_probability, normal_probability], dtype="float32")
     else:
         probs = raw.astype("float32")
         probs = probs / max(float(probs.sum()), 1e-8)
 
-    top = int(np.argmax(probs))
-    return top, probs
+    top_index = int(np.argmax(probs))
+    return top_index, probs
 
 def find_last_conv_layer(model):
     for layer in reversed(model.layers):
@@ -128,11 +134,11 @@ def find_last_conv_layer(model):
 def make_gradcam(model, batch, class_index):
     layer_name = find_last_conv_layer(model)
     if not layer_name:
-        raise RuntimeError("Grad-CAM unavailable: no Conv2D layer found.")
+        raise RuntimeError("No convolution layer found for Grad-CAM.")
 
     grad_model = tf.keras.models.Model(
         model.inputs,
-        [model.get_layer(layer_name).output, model.output]
+        [model.get_layer(layer_name).output, model.output],
     )
 
     with tf.GradientTape() as tape:
@@ -151,153 +157,122 @@ def make_gradcam(model, batch, class_index):
     heatmap = heatmap / (tf.reduce_max(heatmap) + 1e-8)
     return heatmap.numpy()
 
-def overlay_heatmap(image, heatmap, opacity):
-    heat = Image.fromarray(np.uint8(255 * heatmap)).resize(image.size)
-    heat = np.asarray(heat).astype("float32") / 255.0
+def overlay_heatmap(image, heatmap, opacity=0.45):
+    heatmap_image = Image.fromarray(np.uint8(255 * heatmap)).resize(image.size)
+    heat = np.asarray(heatmap_image).astype("float32") / 255.0
 
-    heat_rgb = np.zeros((heat.shape[0], heat.shape[1], 3), dtype="float32")
-    heat_rgb[..., 0] = 255 * heat
-    heat_rgb[..., 1] = 180 * heat
-    heat_rgb[..., 2] = 40 * (1 - heat)
+    color = np.zeros((heat.shape[0], heat.shape[1], 3), dtype="float32")
+    color[..., 0] = 255 * heat
+    color[..., 1] = 160 * heat
+    color[..., 2] = 30 * (1 - heat)
 
     base = np.asarray(image).astype("float32")
-    overlay = base * (1 - opacity) + heat_rgb * opacity
-    return Image.fromarray(np.uint8(np.clip(overlay, 0, 255)))
+    mixed = base * (1 - opacity) + color * opacity
+    return Image.fromarray(np.uint8(np.clip(mixed, 0, 255)))
 
 st.markdown("""
 <div class="hero">
-  <h1>Diabetic Retinopathy Classifier</h1>
-  <p>Upload a retinal fundus image and receive an AI-assisted screening prediction with confidence scores and visual explanation.</p>
+  <h1>Diabetic Retinopathy Screening</h1>
+  <p>Upload a retinal fundus image to receive an AI-assisted screening result, confidence score, and visual explanation.</p>
 </div>
 """, unsafe_allow_html=True)
 
-with st.sidebar:
-    st.header("Screening Settings")
-    st.write("Adjust screening sensitivity")
-    threshold = st.slider("Confidence threshold", 50, 95, 75)
-    show_heatmap = st.toggle("Show Grad-CAM explanation", value=True)
-    heatmap_opacity = st.slider("Heatmap intensity", 20, 80, 45) / 100
-    st.info("Results should be reviewed by a qualified medical professional.")
+step1, step2, step3 = st.columns(3)
+with step1:
+    st.markdown('<div class="step"><b>1. Upload</b><br>Choose a clear retinal image.</div>', unsafe_allow_html=True)
+with step2:
+    st.markdown('<div class="step"><b>2. Analyze</b><br>The AI model checks visual patterns.</div>', unsafe_allow_html=True)
+with step3:
+    st.markdown('<div class="step"><b>3. Review</b><br>See result, confidence, and heatmap.</div>', unsafe_allow_html=True)
+
+st.write("")
 
 try:
     model, model_name = load_model()
-    st.sidebar.success("AI model is ready")
 
-    tab1, tab2, tab3, tab4 = st.tabs(["Classify", "Explainability", "Model Info", "Project Guide"])
+    uploaded = st.file_uploader(
+        "Upload retinal image",
+        type=["jpg", "jpeg", "png", "bmp", "webp"],
+    )
 
-    uploaded = None
-    prediction_data = None
+    if not uploaded:
+        st.info("Upload a retinal image to start screening.")
+    else:
+        input_shape = model.input_shape
+        image_size = (input_shape[1] or 299, input_shape[2] or 299)
+        batch, preview = prepare_image(uploaded, image_size)
 
-    with tab1:
-        uploaded = st.file_uploader(
-            "Upload retinal image",
-            type=["jpg", "jpeg", "png", "bmp", "webp"],
-        )
+        with st.spinner("Analyzing image"):
+            top, probs = predict(model, batch)
 
-        if uploaded:
-            input_shape = model.input_shape
-            image_size = (input_shape[1] or 299, input_shape[2] or 299)
-            batch, preview = prepare_image(uploaded, image_size)
+        label = CLASS_NAMES[top]
+        confidence = float(probs[top] * 100)
 
-            with st.spinner("Analyzing retinal image"):
-                top, probs = predict(model, batch)
+        left, right = st.columns([1, 1], gap="large")
 
-            confidence = float(probs[top] * 100)
-            label = CLASS_NAMES[top]
-            prediction_data = {
-                "prediction": label,
-                "confidence": round(confidence, 2),
-                "abnormal_probability": round(float(probs[0] * 100), 2),
-                "normal_probability": round(float(probs[1] * 100), 2),
-                "model": model_name,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+        with left:
+            st.image(preview, caption="Uploaded retinal image", use_container_width=True)
+
+        with right:
+            result_class = "result-abnormal" if label == "Abnormal" else "result-normal"
+            friendly_label = "Possible DR signs detected" if label == "Abnormal" else "No DR signs detected"
+
+            st.markdown(f'<div class="{result_class}">', unsafe_allow_html=True)
+            st.subheader("Screening Result")
+            st.metric("Result", friendly_label)
+            st.metric("Confidence", f"{confidence:.1f}%")
+            st.markdown("</div>", unsafe_allow_html=True)
+
+            if label == "Abnormal":
+                st.error("Recommended action: Please consult an eye-care professional.")
+            else:
+                st.success("Recommended action: Continue routine screening as advised.")
+
+            st.write("Probability breakdown")
+            for name, prob in zip(CLASS_NAMES, probs):
+                st.write(f"{name}: {prob * 100:.1f}%")
+                st.progress(float(prob))
+
+            report = {
+                "result": friendly_label,
+                "model_class": label,
+                "confidence_percent": round(confidence, 2),
+                "abnormal_probability_percent": round(float(probs[0] * 100), 2),
+                "normal_probability_percent": round(float(probs[1] * 100), 2),
+                "model_file": model_name,
+                "generated_at": datetime.utcnow().isoformat() + "Z",
             }
 
-            col1, col2 = st.columns([1, 1])
+            st.download_button(
+                "Download result report",
+                data=json.dumps(report, indent=2),
+                file_name="retinopathy_screening_result.json",
+                mime="application/json",
+            )
 
-            with col1:
-                st.image(preview, caption="Uploaded retinal image", use_container_width=True)
-
-            with col2:
-                box_class = "result-abnormal" if label == "Abnormal" else "result-normal"
-                st.markdown(f'<div class="{box_class}">', unsafe_allow_html=True)
-                st.subheader("Screening Result")
-                st.metric("Prediction", label)
-                st.metric("Confidence", f"{confidence:.1f}%")
-                st.markdown("</div>", unsafe_allow_html=True)
-
-                if confidence >= threshold:
-                    st.success("High confidence result")
-                else:
-                    st.warning("Low confidence result. Try a clearer retinal image.")
-
-                if label == "Abnormal":
-                    st.error("Recommendation: Consult an eye-care professional for clinical evaluation.")
-                else:
-                    st.info("Recommendation: Continue routine screening as advised by a healthcare professional.")
-
-                st.write("Class probabilities")
-                for name, prob in zip(CLASS_NAMES, probs):
-                    st.write(f"{name}: {prob * 100:.1f}%")
-                    st.progress(float(prob))
-
-                st.download_button(
-                    "Download result summary",
-                    data=json.dumps(prediction_data, indent=2),
-                    file_name="screening_result.json",
-                    mime="application/json",
-                )
-        else:
-            st.info("Upload a retinal image to begin classification.")
-
-    with tab2:
-        st.subheader("Visual Explanation")
-        if uploaded and prediction_data:
+        with st.expander("Show visual explanation"):
             try:
-                input_shape = model.input_shape
-                image_size = (input_shape[1] or 299, input_shape[2] or 299)
-                batch, preview = prepare_image(uploaded, image_size)
-                top, _ = predict(model, batch)
-
-                if show_heatmap:
-                    heatmap = make_gradcam(model, batch, top)
-                    overlay = overlay_heatmap(preview, heatmap, heatmap_opacity)
-                    st.image(overlay, caption="Grad-CAM heatmap overlay", use_container_width=True)
-                    st.caption("Warmer areas contributed more strongly to the model prediction.")
-                else:
-                    st.info("Enable Grad-CAM explanation from the sidebar.")
+                heatmap = make_gradcam(model, batch, top)
+                overlay = overlay_heatmap(preview, heatmap)
+                st.image(overlay, caption="Grad-CAM heatmap", use_container_width=True)
+                st.caption("Warmer regions show areas that influenced the AI prediction more strongly.")
             except Exception as e:
                 st.warning("Grad-CAM explanation is unavailable for this model.")
                 st.code(str(e))
-        else:
-            st.info("Upload and classify an image first to view the explanation.")
 
-    with tab3:
-        st.subheader("Model Information")
-        st.write(f"Loaded model: `{model_name}`")
-        st.write(f"Input shape: `{model.input_shape}`")
-        st.write("Classes: `Abnormal`, `Normal`")
-        st.write("Image preprocessing: resized and normalized before prediction.")
-        st.write("Deployment: Streamlit Cloud")
-        st.write("Model storage: Google Drive")
-
-    with tab4:
-        st.subheader("Project Workflow")
-        st.write("1. Collect and organize retinal image dataset.")
-        st.write("2. Preprocess images and split into training/validation sets.")
-        st.write("3. Train transfer learning models using InceptionV3 and ResNet-based experiments.")
-        st.write("4. Evaluate models using accuracy, precision, recall, F1-score, confusion matrix, and ROC-AUC.")
-        st.write("5. Deploy the best working model through this Streamlit web application.")
-        st.write("6. Provide Grad-CAM visual explanation for interpretability.")
+        with st.expander("Image quality tips"):
+            st.write("- Use a clear retinal fundus image.")
+            st.write("- Avoid blurry, dark, or heavily cropped images.")
+            st.write("- Keep the retina centered in the image.")
 
 except Exception as e:
     st.error("Model could not be loaded")
     st.code(str(e))
 
 st.markdown("""
-<div class="footer">
-This application provides AI-assisted screening support for diabetic retinopathy.
-It is not a substitute for professional diagnosis, clinical examination, or medical advice.
-Uploaded images are processed for prediction and are not intentionally stored by this app.
+<div class="footer-note">
+This application provides AI-assisted screening support only. It is not a substitute for professional medical diagnosis,
+clinical examination, or advice from a qualified healthcare provider. Uploaded images are processed for prediction and are
+not intentionally stored by this app.
 </div>
 """, unsafe_allow_html=True)
