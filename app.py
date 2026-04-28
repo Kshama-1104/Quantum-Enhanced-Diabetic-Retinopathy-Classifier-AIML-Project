@@ -91,14 +91,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 with st.sidebar:
-    st.header("App Panel")
-    st.write("Model source: Google Drive")
-    threshold = st.slider("High confidence threshold", 50, 95, 75)
-    st.info("This tool is for AI screening support only, not medical diagnosis.")
+    st.header("Screening Settings")
+    st.write("Adjust screening sensitivity")
+    threshold = st.slider("Confidence threshold", 50, 95, 75)
+    st.info("Results should be reviewed by a qualified medical professional.")
 
 try:
     model, model_name = load_model()
-    st.sidebar.success(f"Loaded: {model_name}")
+    st.sidebar.success("AI model is ready")
 
     tab1, tab2, tab3 = st.tabs(["Classify", "Model Info", "User Guide"])
 
@@ -156,7 +156,7 @@ try:
         st.write(f"Loaded model: `{model_name}`")
         st.write(f"Input shape: `{model.input_shape}`")
         st.write("Classes: `Abnormal`, `Normal`")
-        st.write("Image preprocessing: resized and rescaled to 0-1.")
+        st.write("Image preprocessing: resized and normalized before prediction.")
 
     with tab3:
         st.subheader("How to Use")
@@ -168,3 +168,12 @@ try:
 except Exception as e:
     st.error("Model could not be loaded")
     st.code(str(e))
+
+
+st.markdown("""
+---
+<div style="color:#667; font-size:14px;">
+This application provides AI-assisted screening support for diabetic retinopathy.
+It is not a substitute for professional diagnosis, clinical examination, or medical advice.
+</div>
+""", unsafe_allow_html=True)
